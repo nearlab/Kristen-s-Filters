@@ -376,7 +376,7 @@ mask = (map_b(3,:) > 0) & (abs(map_b(2,:)./map_b(3,:)) <= 1.75) ...
     & (abs(map_b(1,:)./map_b(3,:)) <= 1.75); %points in front of the range measurement device, roughly 60 deg FOV up/down left/right
 map_b = map_b(:,mask); 
 nPtsInView = size(map_b,2);
-rm = sqrt(map_b(1,:).^2 + map_b(2,:).^2 + map_b(3,:).^2);
+rm = sqrt(map_b(1,:).^2 + map_b(2,:).^2 + map_b(3,:).^2)
 pfTagsObserved = find(mask);
 pfTagsNew = setdiff(pfTagsObserved,pfTags); % Did we observe any new features?
 V = Vr^2*eye(2*nPtsInView);
@@ -405,8 +405,8 @@ for ii = 1:nPtsInView
     H(ii,1:3) = -hr*(pf-p)';
     H(ii,9+ind) = hr*(pf-p)';
 end
-pfVecDiff = pfVecObserved - p;
-zHat = sqrt(pfVecDiff(1,:).^2 + pfVecDiff(2,:).^2 + pfVecDiff(3,:).^2);
+pfVecObs
+zHat = sqrt(pfVec_b(1,:).^2 + map_b(2,:).^2 + map_b(3,:).^2)
 end
 
 function [xU_i, vU_i, qU_i2b, pfVecU_i, PU] = update(z, pfTagsObserved, pfTags, x_i, v_i, q_i2b, pfVec_i,P,V,I)
