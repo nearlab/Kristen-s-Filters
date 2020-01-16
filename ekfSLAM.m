@@ -411,7 +411,7 @@ function [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi] = prop(am_b, wm_b, x_i, v_i, q_
 % Phi_ax : 03x3
 % Phi_av : 03x3
 % Phi_aa : I - cpe(wm_b)
-%
+% 
 % B = [B_xx B_xv
 %      B_vx Bvv];
 % B_xx = -(1/2)*(dt^2)*TBIhat;
