@@ -27,11 +27,11 @@ Pv = diag([.01^2, .01^2, .01^2]);
 Palpha = diag([0.01^2, 0.01^2, 0.01^2]);
 
 %sensor
-cameraRate = 5;
+cameraRate = 1;
 T_b2c = eye(3); %body to camera
 Vc = diag([.001^2,.001^2]);
 
-Nmonte = 50;
+Nmonte = 1;
 %%%Initialization
 %measurement vectors
 wmVec = zeros(T/dt,3,Nmonte);
@@ -59,6 +59,10 @@ vz_err = zeros(T/dt,Nmonte);
 phiVec = zeros(T/dt,Nmonte);
 thVec = zeros(T/dt,Nmonte);
 psiVec = zeros(T/dt,Nmonte);
+
+M = [];
+PHI = eye(9);
+
 
 for iMonte=1:Nmonte
     
@@ -127,7 +131,7 @@ for iMonte=1:Nmonte
         wm_b = w_true_b + sqrt(PSDg/dt)*randn(3,1); %body angular rate [rad/s]
         
         %propagation
-        [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi] = prop(am_b, wm_b, x_i, v_i, q_i2b, pfVec_i, dt, P, PSDa, PSDg, qf);
+        [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi, PHI] = prop(am_b, wm_b, x_i, v_i, q_i2b, pfVec_i, dt, P, PSDa, PSDg, qf, PHI);
         %%%% PHI COMPARISON %%%%
 %         g = [0;0;-1];
 %         T_i2b_hat = quat2dcm(q_i2b'); %old inertial-to-body DCM
@@ -183,7 +187,7 @@ for iMonte=1:Nmonte
         
         %update 
         if mod(ii,cameraRate) == 0
-            [cm,pfTagsNew,pfTagsObserved,V] = cameraMeasurement(x_true, q_true_i2b, pfTags, I);
+            [rm,pfTagsNew,pfTagsObserved,V] = rangeMeasurement(x_true, q_true_i2b, pfTags, I);
             nNewPts = length(pfTagsNew);
             if nNewPts > 0
                 Vf = .00000001;
@@ -192,7 +196,7 @@ for iMonte=1:Nmonte
                 pfTags = [pfTags,pfTagsNew];
                 PP = blkdiag(PP,Vf*eye(3*nNewPts)); %if features were seen, augment covariance
             end
-            [xU_i, vU_i, qU_i2b, pfVecU_i, PU] = update(cm(:), pfTagsObserved, pfTags, xP_i, vP_i, qP_i2b, pfVec_i, PP, V, I); %%
+            [xU_i, vU_i, qU_i2b, pfVecU_i, PU, H] = update(rm(:), pfTagsObserved, pfTags, xP_i, vP_i, qP_i2b, pfVec_i, PP, V, I); %%
             
             
             x_i = xU_i;
@@ -200,6 +204,16 @@ for iMonte=1:Nmonte
             q_i2b = qU_i2b; 
             pfVec_i = pfVecU_i;
             P = PU;  
+            
+            % Rank test for observability matrix M
+            dimPHI = size(PHI,1);
+            dimH = size(H,2);
+            if (dimPHI - dimH) ~= 0
+                PHI = blkdiag(PHI,eye(dimH-dimPHI));
+            end
+            M_curr = H*PHI;
+            M = [M, zeros(size(M,1),size(M_curr,2)-size(M,2)); M_curr];
+            size(M,2) - rank(M)
         else
             x_i = xP_i;
             v_i = vP_i;
@@ -379,13 +393,12 @@ nPtsInView = size(map_b,2);
 rm = sqrt(map_b(1,:).^2 + map_b(2,:).^2 + map_b(3,:).^2);
 pfTagsObserved = find(mask);
 pfTagsNew = setdiff(pfTagsObserved,pfTags); % Did we observe any new features?
-V = Vr^2*eye(2*nPtsInView);
-% plotCam(cm,mask,7);
+V = Vr^2*eye(nPtsInView);
 end
 
 function [zHat,H] = rangeMeasModel(p,q,pfVec,pfTags,pfTagsObserved,I)
 %CAMERAMEASMODEL Generates H-matrix for camera measurement 
-T_i2b = quat2dcm(q'); 
+% T_i2b = quat2dcm(q'); 
 % pf_mat = I.map; %feature positions
 nPtsInState = length(pfTags);
 nPtsInView = length(pfTagsObserved);
@@ -403,14 +416,16 @@ for ii = 1:nPtsInView
     pf = pfVecObserved(:,ii);
     hr = 1/sqrt((pf-p)'*(pf-p));
     H(ii,1:3) = -hr*(pf-p)';
+    ind = 3*indObserved(ii)-2:3*indObserved(ii);
     H(ii,9+ind) = hr*(pf-p)';
 end
 pfVecDiff = pfVecObserved - p;
 zHat = sqrt(pfVecDiff(1,:).^2 + pfVecDiff(2,:).^2 + pfVecDiff(3,:).^2);
+zHat = zHat(:);
 end
 
-function [xU_i, vU_i, qU_i2b, pfVecU_i, PU] = update(z, pfTagsObserved, pfTags, x_i, v_i, q_i2b, pfVec_i,P,V,I)
-[zHat,H] = cameraMeasModel(x_i,q_i2b,pfVec_i,pfTags,pfTagsObserved,I);
+function [xU_i, vU_i, qU_i2b, pfVecU_i, PU, H] = update(z, pfTagsObserved, pfTags, x_i, v_i, q_i2b, pfVec_i,P,V,I)
+[zHat,H] = rangeMeasModel(x_i,q_i2b,pfVec_i,pfTags,pfTagsObserved,I);
 K = (P*H')/(H*P*H' + V);
 delStates = K*(z-zHat);
 xU_i = x_i + delStates(1:3);
@@ -435,7 +450,7 @@ PU = P - K*(H*P*H'+V)*K'; %(eye(9) - K*H)*P*(eye(9) - K*H)' + K*V*K'; %Joseph fo
 end
 
 
-function [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi] = prop(am_b, wm_b, x_i, v_i, q_i2b, pfVec_i, dt, P, PSDa, PSDw, qf)
+function [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi, PHI] = prop(am_b, wm_b, x_i, v_i, q_i2b, pfVec_i, dt, P, PSDa, PSDw, qf, PHI)
 % x = [x_i, v_i, a_ib]
 % x_i : 3x1 IMU position in the inertial frame
 % v_i : 3x1 IMU velocity in the inertial frame
@@ -521,6 +536,10 @@ B = [B_xna, B_xng;...
     zeros(3*nPts,6)];
 
 PP = Phi*P*Phi' + B*Q*B';
+
+% Maintaining STM from time 1 to current time
+PHI = Phi*PHI;
+
 end
 
 function [statesDot] = trueKinematics(t,states,I,qf)
