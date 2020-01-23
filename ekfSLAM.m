@@ -62,6 +62,8 @@ thVec = zeros(T/dt,Nmonte);
 psiVec = zeros(T/dt,Nmonte);
 
 M = [];
+nullSpaceDim = [];
+Mdim = [];
 PHI = eye(12);
 
 
@@ -100,7 +102,7 @@ for iMonte=1:Nmonte
         q_i2b = q_init; % inertial-to-body
     end
     q_true_i2b = q_init;
-    pfVec_i = [6; 0; 0] + .01*randn(3,1); % add initial guess of single point location
+    pfVec_i = I.map + .01*randn(3,1); % add initial guess of single point location
     pfTags = [1];
     
     xVec(1,:,iMonte) = x_i';
@@ -216,7 +218,9 @@ for iMonte=1:Nmonte
 %             end
             M_curr = H*PHI;
             M = [M; M_curr];
-            size(M,2) - rank(M)
+            Mdim = [Mdim; rank(M)];
+            nullSpaceDim = [nullSpaceDim; size(M,2) - rank(M)];
+            PHI = Phi*PHI;
         else
             x_i = xP_i;
             v_i = vP_i;
@@ -326,8 +330,8 @@ hold off
 title("Trajectory of body frame (red = x_b, green = y_b, blue = z_b)")
 axis equal
 
-% figure(10); plot(vecnorm(V_Phi_test),'*r'); title('\Phi_v_a constraint')
-% figure(11); plot(vecnorm(X_Phi_test),'*b'); title('\Phi_x_a constraint')
+figure(10); plot(nullSpaceDim, 'LineWidth', 2); title('Dimension of nullspace of H-\Phi matrix')
+figure(11); plot(Mdim, 'LineWidth', 2); title('Dimension of M')
 
 function [cm,pfTagsNew,pfTagsObserved,V] = cameraMeasurement(p,q,pfTags,I)
 %CAMERAMEASUREMENT Generates a simulated camera measurement of features in
@@ -542,7 +546,7 @@ B = [B_xna, B_xng;...
 PP = Phi*P*Phi' + B*Q*B';
 
 % Maintaining STM from time 1 to current time
-PHI = Phi*PHI;
+% PHI = Phi*PHI;
 
 end
 
