@@ -1,6 +1,6 @@
 %%%Inputs
 close all;
-I = generateHeschInput();
+I = generateSinglePointInput();
 qf = quaternionFunctions();
 
 %initial state
@@ -25,6 +25,7 @@ PSDg = (0.15*pi/180/60)^2; % [rad^2/s] = 0.15 deg/sqrt(hr)
 Px = diag([.03^2, .03^2, .03^2]);
 Pv = diag([.01^2, .01^2, .01^2]);
 Palpha = diag([0.01^2, 0.01^2, 0.01^2]);
+Ppf = diag([.01^2, .01^2, .01^2]);
 
 %sensor
 cameraRate = 1;
@@ -61,7 +62,7 @@ thVec = zeros(T/dt,Nmonte);
 psiVec = zeros(T/dt,Nmonte);
 
 M = [];
-PHI = eye(9);
+PHI = eye(12);
 
 
 for iMonte=1:Nmonte
@@ -75,7 +76,7 @@ for iMonte=1:Nmonte
     amVec(1,:,iMonte) = a0_true_i' + sqrt(PSDa/dt)*randn(3,1)';
 
     poseVec = []; % stores a [q,p] pair every time an image is recorded
-    P = blkdiag(Px, Pv, Palpha);
+    P = blkdiag(Px, Pv, Palpha, Ppf);
     PxVec(1,iMonte) = P(1,1);
     PyVec(1,iMonte) = P(2,2);
     PzVec(1,iMonte) = P(3,3);
@@ -99,8 +100,8 @@ for iMonte=1:Nmonte
         q_i2b = q_init; % inertial-to-body
     end
     q_true_i2b = q_init;
-    pfVec_i = []; 
-    pfTags = [];
+    pfVec_i = [6; 0; 0] + .01*randn(3,1); % add initial guess of single point location
+    pfTags = [1];
     
     xVec(1,:,iMonte) = x_i';
     vVec(1,:,iMonte) = v_i';
@@ -131,7 +132,11 @@ for iMonte=1:Nmonte
         wm_b = w_true_b + sqrt(PSDg/dt)*randn(3,1); %body angular rate [rad/s]
         
         %propagation
-        [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi, PHI] = prop(am_b, wm_b, x_i, v_i, q_i2b, pfVec_i, dt, P, PSDa, PSDg, qf, PHI);
+        x_true = states_hist_true(ii,1:3)';
+        vx_true = states_hist_true(ii,4:6)';
+        q_true_i2b = states_hist_true(ii,7:10)';
+        pf_true = I.map; % true point location
+        [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi, PHI] = prop(am_b, wm_b, x_true, vx_true, q_true_i2b, pf_true, dt, P, PSDa, PSDg, qf, PHI);
         %%%% PHI COMPARISON %%%%
 %         g = [0;0;-1];
 %         T_i2b_hat = quat2dcm(q_i2b'); %old inertial-to-body DCM
@@ -148,7 +153,6 @@ for iMonte=1:Nmonte
         qVec(ii,:,iMonte) = qP_i2b';
         
         %calculate position error and covariance in x, y, and z
-        x_true = states_hist_true(ii,1:3)';
         x_err(ii,iMonte) = xP_i(1) - x_true(1);
         y_err(ii,iMonte) = xP_i(2) - x_true(2);
         z_err(ii,iMonte) = xP_i(3) - x_true(3);
@@ -156,7 +160,6 @@ for iMonte=1:Nmonte
         PzVec(ii,iMonte) = PP(3,3);
         
         %calculate velocity error and covariance: vx, vy, vz
-        vx_true = states_hist_true(ii,4:6)';
         vx_err(ii,iMonte) = vP_i(1) - vx_true(1);
         vy_err(ii,iMonte) = vP_i(2) - vx_true(2);
         vz_err(ii,iMonte) = vP_i(3) - vx_true(3);
@@ -165,7 +168,6 @@ for iMonte=1:Nmonte
         PvzVec(ii,iMonte) = PP(6,6);
         
         %add an error and true quaternion
-        q_true_i2b = states_hist_true(ii,7:10)';
 %         nt = norm(w_true_b)*dt;
 %         if nt>1e-10
 %             qdth_b = [cos(0.5*nt), ...
@@ -189,14 +191,15 @@ for iMonte=1:Nmonte
         if mod(ii,cameraRate) == 0
             [rm,pfTagsNew,pfTagsObserved,V] = rangeMeasurement(x_true, q_true_i2b, pfTags, I);
             nNewPts = length(pfTagsNew);
-            if nNewPts > 0
-                Vf = .00000001;
-                newPts = I.map(:,pfTagsNew) + sqrt(Vf)*randn(3,nNewPts); %noisy new features
-                pfVec_i = [pfVec_i,newPts];
-                pfTags = [pfTags,pfTagsNew];
-                PP = blkdiag(PP,Vf*eye(3*nNewPts)); %if features were seen, augment covariance
-            end
-            [xU_i, vU_i, qU_i2b, pfVecU_i, PU, H] = update(rm(:), pfTagsObserved, pfTags, xP_i, vP_i, qP_i2b, pfVec_i, PP, V, I); %%
+%             if nNewPts > 0
+%                 Vf = .00000001;
+%                 newPts = I.map(:,pfTagsNew) + sqrt(Vf)*randn(3,nNewPts); %noisy new features
+%                 pfVec_i = [pfVec_i,newPts];
+%                 pfTags = [pfTags,pfTagsNew];
+%                 PP = blkdiag(PP,Vf*eye(3*nNewPts)); %if features were seen, augment covariance
+%             end
+            [xU_i, vU_i, qU_i2b, pfVecU_i, PU, H] = update(rm(:), pfTagsObserved, pfTags, xP_i, vP_i, qP_i2b, ...
+                pfVec_i, PP, V, I, x_true, q_true_i2b, pf_true); %%
             
             
             x_i = xU_i;
@@ -206,13 +209,13 @@ for iMonte=1:Nmonte
             P = PU;  
             
             % Rank test for observability matrix M
-            dimPHI = size(PHI,1);
-            dimH = size(H,2);
-            if (dimPHI - dimH) ~= 0
-                PHI = blkdiag(PHI,eye(dimH-dimPHI));
-            end
+%             dimPHI = size(PHI,1);
+%             dimH = size(H,2);
+%             if (dimPHI - dimH) ~= 0
+%                 PHI = blkdiag(PHI,eye(dimH-dimPHI));
+%             end
             M_curr = H*PHI;
-            M = [M, zeros(size(M,1),size(M_curr,2)-size(M,2)); M_curr];
+            M = [M; M_curr];
             size(M,2) - rank(M)
         else
             x_i = xP_i;
@@ -386,8 +389,9 @@ pf_mat = I.map; %feature positions
 nPts = I.nPts;
 p_mat = repmat(p,1,nPts);
 map_b = T_i2b*(pf_mat - p_mat);
-mask = (map_b(3,:) > 0) & (abs(map_b(2,:)./map_b(3,:)) <= 1.75) ...
-    & (abs(map_b(1,:)./map_b(3,:)) <= 1.75); %points in front of the range measurement device, roughly 60 deg FOV up/down left/right
+mask = [1]; % only looking at 1 feature
+%     (map_b(3,:) > 0) & (abs(map_b(2,:)./map_b(3,:)) <= 1.75) ...
+%     & (abs(map_b(1,:)./map_b(3,:)) <= 1.75); %points in front of the range measurement device, roughly 60 deg FOV up/down left/right
 map_b = map_b(:,mask); 
 nPtsInView = size(map_b,2);
 rm = sqrt(map_b(1,:).^2 + map_b(2,:).^2 + map_b(3,:).^2);
@@ -424,8 +428,8 @@ zHat = sqrt(pfVecDiff(1,:).^2 + pfVecDiff(2,:).^2 + pfVecDiff(3,:).^2);
 zHat = zHat(:);
 end
 
-function [xU_i, vU_i, qU_i2b, pfVecU_i, PU, H] = update(z, pfTagsObserved, pfTags, x_i, v_i, q_i2b, pfVec_i,P,V,I)
-[zHat,H] = rangeMeasModel(x_i,q_i2b,pfVec_i,pfTags,pfTagsObserved,I);
+function [xU_i, vU_i, qU_i2b, pfVecU_i, PU, H] = update(z, pfTagsObserved, pfTags, x_i, v_i, q_i2b, pfVec_i,P,V,I,x_true,q_true_i2b,pf_true)
+[zHat,H] = rangeMeasModel(x_true,q_true_i2b,pf_true,pfTags,pfTagsObserved,I);
 K = (P*H')/(H*P*H' + V);
 delStates = K*(z-zHat);
 xU_i = x_i + delStates(1:3);
