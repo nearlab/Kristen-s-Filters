@@ -61,9 +61,10 @@ phiVec = zeros(T/dt,Nmonte);
 thVec = zeros(T/dt,Nmonte);
 psiVec = zeros(T/dt,Nmonte);
 
+%%% OBSERVABILITY TESTING %%%
 M = [];
 nullSpaceDim = [];
-Mdim = [];
+Mrank = [];
 PHI = eye(12);
 
 
@@ -138,7 +139,7 @@ for iMonte=1:Nmonte
         vx_true = states_hist_true(ii,4:6)';
         q_true_i2b = states_hist_true(ii,7:10)';
         pf_true = I.map; % true point location
-        [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi, PHI] = prop(am_b, wm_b, x_true, vx_true, q_true_i2b, pf_true, dt, P, PSDa, PSDg, qf, PHI);
+        [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi] = prop(am_b, wm_b, x_true, vx_true, q_true_i2b, pf_true, dt, P, PSDa, PSDg, qf);
         %%%% PHI COMPARISON %%%%
 %         g = [0;0;-1];
 %         T_i2b_hat = quat2dcm(q_i2b'); %old inertial-to-body DCM
@@ -218,7 +219,7 @@ for iMonte=1:Nmonte
 %             end
             M_curr = H*PHI;
             M = [M; M_curr];
-            Mdim = [Mdim; rank(M)];
+            Mrank = [Mrank; rank(M)];
             nullSpaceDim = [nullSpaceDim; size(M,2) - rank(M)];
             PHI = Phi*PHI;
         else
@@ -331,7 +332,7 @@ title("Trajectory of body frame (red = x_b, green = y_b, blue = z_b)")
 axis equal
 
 figure(10); plot(nullSpaceDim, 'LineWidth', 2); title('Dimension of nullspace of H-\Phi matrix')
-figure(11); plot(Mdim, 'LineWidth', 2); title('Dimension of M')
+figure(11); plot(Mrank, 'LineWidth', 2); title('Dimension of M')
 
 function [cm,pfTagsNew,pfTagsObserved,V] = cameraMeasurement(p,q,pfTags,I)
 %CAMERAMEASUREMENT Generates a simulated camera measurement of features in
@@ -398,7 +399,7 @@ mask = [1]; % only looking at 1 feature
 %     & (abs(map_b(1,:)./map_b(3,:)) <= 1.75); %points in front of the range measurement device, roughly 60 deg FOV up/down left/right
 map_b = map_b(:,mask); 
 nPtsInView = size(map_b,2);
-rm = sqrt(map_b(1,:).^2 + map_b(2,:).^2 + map_b(3,:).^2);
+rm = sqrt(map_b(1,:).^2 + map_b(2,:).^2 + map_b(3,:).^2) + Vr*randn();
 pfTagsObserved = find(mask);
 pfTagsNew = setdiff(pfTagsObserved,pfTags); % Did we observe any new features?
 V = Vr^2*eye(nPtsInView);
@@ -458,7 +459,7 @@ PU = P - K*(H*P*H'+V)*K'; %(eye(9) - K*H)*P*(eye(9) - K*H)' + K*V*K'; %Joseph fo
 end
 
 
-function [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi, PHI] = prop(am_b, wm_b, x_i, v_i, q_i2b, pfVec_i, dt, P, PSDa, PSDw, qf, PHI)
+function [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi] = prop(am_b, wm_b, x_i, v_i, q_i2b, pfVec_i, dt, P, PSDa, PSDw, qf)
 % x = [x_i, v_i, a_ib]
 % x_i : 3x1 IMU position in the inertial frame
 % v_i : 3x1 IMU velocity in the inertial frame
@@ -467,26 +468,6 @@ function [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi, PHI] = prop(am_b, wm_b, x_i, v_
 % am_b : measured acceleration in body frame
 % wm_b : measured angular rate of the body frame
 % G = 3x3 gravity matrix
-%
-% Phi = [Phi_xx Phi_vx Phi_ax
-%        Phi_vx Phi_vv Phi_av
-%        Phi_ax Phi_av Phi_aa]
-% Phi_xx : I3x3 + (1/2)*(dt^2)*G
-% Phi_vx : dt*I
-% Phi_ax : -(1/2)*(dt^2)*TBIhat*[am_b x]
-% Phi_vx : dt*G
-% Phi_vv : I3x3
-% Phi_av : -dt*TBIhat*[am_b x]
-% Phi_ax : 03x3
-% Phi_av : 03x3
-% Phi_aa : I - cpe(wm_b)
-% 
-% B = [B_xx B_xv
-%      B_vx Bvv];
-% B_xx = -(1/2)*(dt^2)*TBIhat;
-% B_xv = 03x3
-% B_vx = 03x3
-% B_vv = I3x3
 %
 % Covariance propagation:
 % P(k+1) = Phi*P*Phi' + B*Q*B'
@@ -517,21 +498,18 @@ Qg = dt*PSDw*eye(3);
 Q = blkdiag(Qa,Qg);
 
 % Propagate covariance
-Phi_xx = eye(3,3) + 0.5*(dt^2)*G;
-Phi_xv = dt*eye(3,3);
-Phi_xa = -0.5*(dt^2)*T_i2b_hat'*qf.cpe(am_b);
-Phi_vx = dt*G;
-Phi_vv = eye(3,3);
-Phi_va = -dt*T_i2b_hat'*qf.cpe(am_b);
-Phi_ax = zeros(3,3);
-Phi_av = zeros(3,3);
-Phi_aa = eye(3,3) - qf.cpe(dth_b);
-Phi = [Phi_xx, Phi_xv, Phi_xa; ...
-    Phi_vx, Phi_vv, Phi_va; ...
-    Phi_ax, Phi_av, Phi_aa];
+% See Hesch et al 2014
+F_xx = zeros(3); F_xv = eye(3); F_xa = zeros(3); 
+F_vx = zeros(3); F_vv = zeros(3); F_va = -T_i2b_hat'*cpe(am_i);
+F_ax = zeros(3); F_av = zeros(3); F_aa = -cpe(wm_b);
+F = [F_xx, F_xv, F_xa; 
+     F_vx, F_vv, F_va; 
+     F_ax, F_av, F_aa];
+Phi = expm(F*dt)*eye(9); %xdot = Ax => x = e^(At)x0.
 if nPts > 0
     Phi = blkdiag(Phi,eye(3*nPts));
 end
+
 B_xna = -0.5*dt*T_i2b_hat';
 B_xng = zeros(3,3);
 B_vna = -T_i2b_hat';
