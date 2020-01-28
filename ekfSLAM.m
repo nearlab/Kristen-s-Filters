@@ -27,6 +27,17 @@ Pv = diag([.01^2, .01^2, .01^2]);
 Palpha = diag([0.01^2, 0.01^2, 0.01^2]);
 Ppf = diag([.01^2, .01^2, .01^2]);
 
+%IMU
+% see STIM300 ButterflyGyro Datasheet
+g = 9.80665; % m/s^2
+gyroParams = gyroparams('NoiseDensity', PSDg, 'BiasInstability', 0.3*pi/180/3600) % 0.3 deg/hr => rad/s
+accelParams = accelparams('NoiseDensity', PSDa, 'BiasInstability', .05*.001*g) % taking unit mg to mean "milli-g's" => m/s^2
+imu = imuSensor('SampleRate', 1/dt, 'Gyroscope', gyroParams, 'Accelerometer', accelParams);
+[a_true_imu, w_true_imu] = I.trueInput(tVec);
+% a_true_imu(3,:) = a_true_imu(3,:) - g; % looks like gravity is already taken care of for you
+[accelData, gyroData] = imu(a_true_imu', w_true_imu');
+% plotIMU(accelData, gyroData, tVec, 2, 3)
+
 %sensor
 cameraRate = 1;
 T_b2c = eye(3); %body to camera
@@ -75,8 +86,8 @@ for iMonte=1:Nmonte
     [a0_true_i, w0_true_b] = I.trueInput(0);
 %     T0_i2b = quat2dcm(q_init');
     
-    wmVec(1,:,iMonte) = w0_true_b' + sqrt(PSDg/dt)*randn(3,1)';
-    amVec(1,:,iMonte) = a0_true_i' + sqrt(PSDa/dt)*randn(3,1)';
+    wmVec(1,:,iMonte) = gyroData(1,:); %w0_true_b' + sqrt(PSDg/dt)*randn(3,1)';
+    amVec(1,:,iMonte) = accelData(1,:); %a0_true_i' + sqrt(PSDa/dt)*randn(3,1)';
 
     poseVec = []; % stores a [q,p] pair every time an image is recorded
     P = blkdiag(Px, Pv, Palpha, Ppf);
@@ -129,10 +140,10 @@ for iMonte=1:Nmonte
         T_i2b_true = quat2dcm(q_true_i2b'); %inertial-to-body DCM
         
         %measurement
-        [a_true_i,w_true_b] = I.trueInput(t_curr);
-        a_true_b = T_i2b_true*a_true_i;
-        am_b = T_i2b_true*a_true_i + sqrt(PSDa/dt)*randn(3,1); %body acceleration [m/s^2]
-        wm_b = w_true_b + sqrt(PSDg/dt)*randn(3,1); %body angular rate [rad/s]
+%         [a_true_i,w_true_b] = I.trueInput(t_curr);
+%         a_true_b = T_i2b_true*a_true_i;
+        am_b = T_i2b_true*accelData(ii,:)'; %T_i2b_true*a_true_i + sqrt(PSDa/dt)*randn(3,1); %body acceleration [m/s^2]
+        wm_b = gyroData(ii,:)'; %w_true_b + sqrt(PSDg/dt)*randn(3,1); %body angular rate [rad/s]
         
         %propagation
         x_true = states_hist_true(ii,1:3)';
@@ -522,9 +533,6 @@ B = [B_xna, B_xng;...
     zeros(3*nPts,6)];
 
 PP = Phi*P*Phi' + B*Q*B';
-
-% Maintaining STM from time 1 to current time
-% PHI = Phi*PHI;
 
 end
 
