@@ -24,9 +24,9 @@ end
 function [at_i,wt_b] = trueInput(t)
 at_i = [-5*(2*pi/60)^2*cos((2*pi/60)*t);
         -5*(2*pi/60)^2*sin((2*pi/60)*t);
-        0];
-wt_b = [0;
-        (2*pi/60);
-        0];
+        -1*(2*pi/10)^2*sin((2*pi/10)*t)];
+wt_b = [zeros(1,length(t));
+        zeros(1,length(t)); %(2*pi/60)*ones(1,length(t));
+        zeros(1,length(t))];
 end
 
