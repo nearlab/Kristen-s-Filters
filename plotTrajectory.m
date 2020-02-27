@@ -3,7 +3,7 @@ function [] = plotTrajectory(tHist,statesHist,figNum,I)
 lenT = length(tHist);
 xHist = statesHist(:,1:3);
 qHist = statesHist(:,7:10);
-dt = floor(lenT/5);
+dt = floor(lenT/20);
 
 % Plot trajectory
 figure(figNum);

@@ -1,5 +1,5 @@
 %%%Inputs
-close all;
+close all; clear;
 I = generateSinglePointInput();
 qf = quaternionFunctions();
 
@@ -32,18 +32,17 @@ Ppf = diag([.01^2, .01^2, .01^2]);
 %IMU
 % see STIM300 ButterflyGyro Datasheet
 g = 9.80665; % m/s^2
-gyroParams = gyroparams('NoiseDensity', PSDg, 'BiasInstability', 0.3*pi/180/3600); % 0.3 deg/hr => rad/s
-accelParams = accelparams('NoiseDensity', PSDa, 'BiasInstability', .05*.001*g); % taking unit mg to mean "milli-g's" => m/s^2
+gyroParams = gyroparams('NoiseDensity', 0*PSDg, 'BiasInstability', 0*0.3*pi/180/3600); % 0.3 deg/hr => rad/s
+accelParams = accelparams('NoiseDensity', 0*PSDa, 'BiasInstability', 0*.05*.001*g); % taking unit mg to mean "milli-g's" => m/s^2
 imu = imuSensor('SampleRate', 1/dt, 'Gyroscope', gyroParams, 'Accelerometer', accelParams);
 [a_true,~,w_true] = I.trueInput(tVec);
 orientation_true = quaternion(states_hist_true(:,7:10));
 [accelData, gyroData] = imu(a_true', w_true', orientation_true); % probably have to move this into the loop once you start doing monte carlos
 accelData = -accelData; % this measures backwards for some reason, who knows
 plotIMU(accelData, gyroData, tVec, 2, 3)
-figure; plot(tVec,a_true); legend('x', 'y', 'z')
 
 %sensor
-sensorRate = 100;
+sensorRate = I.sensorRate;
 T_b2c = eye(3); %body to camera
 Vc = diag([.001^2,.001^2]);
 
@@ -55,8 +54,8 @@ amVec = zeros(T/dt,3,Nmonte);
 xVec = zeros(T/dt,3,Nmonte);
 vVec = zeros(T/dt,3,Nmonte);
 qVec = zeros(T/dt,4,Nmonte);
-baVec = zeros(T/dt,3,Nmonte);
-bgVec = zeros(T/dt,3,Nmonte);
+% baVec = zeros(T/dt,3,Nmonte);
+% bgVec = zeros(T/dt,3,Nmonte);
 
 PxVec = zeros(T/dt,Nmonte);
 PyVec = zeros(T/dt,Nmonte);
@@ -86,7 +85,6 @@ PHI = eye(18);
 
 
 for iMonte=1:Nmonte
-    
 %     a_true_i = 0.15*ones(3,1); % m/s^2
 %     w_true_b = (pi/10)*ones(3,1); % rad/s
     [a0_true_i, w0_true_b,~] = I.trueInput(0);
@@ -108,9 +106,9 @@ for iMonte=1:Nmonte
     PpsiVec(1,iMonte) = P(9,9);
     
     
-    x_i = x_init + chol(Px)*randn(3,1);  % inertial
-    v_i = v_init + chol(Pv)*randn(3,1);  % inertial
-    da = chol(Palpha)*randn(3,1);  % body
+    x_i = x_init + 0*chol(Px)*randn(3,1);  % inertial
+    v_i = v_init + 0*chol(Pv)*randn(3,1);  % inertial
+    da = 0*chol(Palpha)*randn(3,1);  % body
     nt = norm(da);
     if nt>1e-10
         dq = [cos(0.5*nt), ...
@@ -120,9 +118,9 @@ for iMonte=1:Nmonte
         q_i2b = q_init; % inertial-to-body
     end
 %     q_true_i2b = q_init;
-    ba = chol(Pba)*randn(3,1); % biases assumed to be zero
-    bg = chol(Pbg)*randn(3,1);
-    pfVec_i = I.map + .01*randn(3,1); % add initial guess of single point location
+%     ba = 0*chol(Pba)*randn(3,1); % biases assumed to be zero
+%     bg = 0*chol(Pbg)*randn(3,1);
+    pfVec_i = I.map + 0*.01*randn(3,1); % add initial guess of single point location
     pfTags = [1];
     
     xVec(1,:,iMonte) = x_i';
@@ -150,15 +148,17 @@ for iMonte=1:Nmonte
         %measurement
 %         [a_true_i,w_true_b] = I.trueInput(t_curr);
 %         a_true_b = T_i2b_true*a_true_i;
-        am_b = accelData(ii,:)'; %T_i2b_true*a_true_i + sqrt(PSDa/dt)*randn(3,1); %body acceleration [m/s^2]
-        wm_b = gyroData(ii,:)'; %w_true_b + sqrt(PSDg/dt)*randn(3,1); %body angular rate [rad/s]
+        am_b = accelData(ii-1,:)'; %T_i2b_true*a_true_i + sqrt(PSDa/dt)*randn(3,1); %body acceleration [m/s^2]
+        wm_b = gyroData(ii-1,:)'; %w_true_b + sqrt(PSDg/dt)*randn(3,1); %body angular rate [rad/s]
         
         %propagation
-        x_true = states_hist_true(ii,1:3)';
-        vx_true = states_hist_true(ii,4:6)';
-        q_true_i2b = states_hist_true(ii,7:10)';
+        % Propagate from time (ii-1) to time ii
+        states_true_km1 = states_hist_true(ii-1,1:10)';
+        states_true_k = states_hist_true(ii,1:10)';
+        ba_true = zeros(3,1); bg_true = zeros(3,1);
         pf_true = I.map; % true point location
-        [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi] = prop(am_b, wm_b, x_true, vx_true, q_true_i2b, ba, bg, pf_true, dt, P, PSDa, PSDg, qf);
+        [xP_i, vP_i, qP_i2b, baP, bgP, pfVecP_i, PP, Phi] = prop(am_b, wm_b, states_true_km1, states_true_k, ...
+            ba_true, bg_true, pf_true, dt, P, PSDa, PSDg, qf, I, t_curr);
         %%%% PHI COMPARISON %%%%
 %         g = [0;0;-1];
 %         T_i2b_hat = quat2dcm(q_i2b'); %old inertial-to-body DCM
@@ -175,16 +175,17 @@ for iMonte=1:Nmonte
         qVec(ii,:,iMonte) = qP_i2b';
         
         %calculate position error and covariance in x, y, and z
-        x_err(ii,iMonte) = xP_i(1) - x_true(1);
-        y_err(ii,iMonte) = xP_i(2) - x_true(2);
-        z_err(ii,iMonte) = xP_i(3) - x_true(3);
+        x_err(ii,iMonte) = xP_i(1) - states_true_k(1);
+        y_err(ii,iMonte) = xP_i(2) - states_true_k(2);
+        z_err(ii,iMonte) = xP_i(3) - states_true_k(3);
+        PxVec(ii,iMonte) = PP(1,1);
         PyVec(ii,iMonte) = PP(2,2);
         PzVec(ii,iMonte) = PP(3,3);
         
         %calculate velocity error and covariance: vx, vy, vz
-        vx_err(ii,iMonte) = vP_i(1) - vx_true(1);
-        vy_err(ii,iMonte) = vP_i(2) - vx_true(2);
-        vz_err(ii,iMonte) = vP_i(3) - vx_true(3);
+        vx_err(ii,iMonte) = vP_i(1) - states_true_k(4);
+        vy_err(ii,iMonte) = vP_i(2) - states_true_k(5);
+        vz_err(ii,iMonte) = vP_i(3) - states_true_k(6);
         PvxVec(ii,iMonte) = PP(4,4);
         PvyVec(ii,iMonte) = PP(5,5);
         PvzVec(ii,iMonte) = PP(6,6);
@@ -199,7 +200,7 @@ for iMonte=1:Nmonte
 %             q_true_i2b = q_init;
 %         end
         qP_b2i = [qP_i2b(1); -qP_i2b(2:4)];
-        dq_b = quatmultiply(qP_b2i',q_true_i2b')';
+        dq_b = quatmultiply(qP_b2i',states_true_k(7:10)')';
         phiVec(ii,iMonte) = 2*dq_b(2)/dq_b(1);
         thVec(ii,iMonte) = 2*dq_b(3)/dq_b(1);
         psiVec(ii,iMonte) = 2*dq_b(4)/dq_b(1);
@@ -210,7 +211,12 @@ for iMonte=1:Nmonte
         
         
         %update 
+        % Measure at time ii.
+        t_curr = ii*dt;
         if mod(ii,sensorRate) == 0
+            x_true = states_true_k(1:3);
+            vx_true = states_true_k(4:6);
+            q_true_i2b = states_true_k(7:10);
             [rm,pfTagsNew,pfTagsObserved,V] = cameraMeasurement(x_true, q_true_i2b, pfTags, I);
             nNewPts = length(pfTagsNew);
 %             if nNewPts > 0
@@ -220,9 +226,8 @@ for iMonte=1:Nmonte
 %                 pfTags = [pfTags,pfTagsNew];
 %                 PP = blkdiag(PP,Vf*eye(3*nNewPts)); %if features were seen, augment covariance
 %             end
-            [xU_i, vU_i, qU_i2b, baU, bgU, pfVecU_i, PU, H] = update(rm(:), pfTagsObserved, pfTags, xP_i, vP_i, qP_i2b, ba, bg, ...
-                pfVec_i, PP, V, I, x_true, q_true_i2b, pf_true); %%
-            
+            [xU_i, vU_i, qU_i2b, baU, bgU, pfVecU_i, PU, H] = update(ii,rm(:), pfTagsObserved, pfTags, xP_i, vP_i, qP_i2b, baP, bgP,...
+                pfVec_i, PP, V, I, x_true, q_true_i2b, ba_true, bg_true, pf_true); %%
             
             x_i = xU_i;
             v_i = vU_i;
@@ -233,22 +238,22 @@ for iMonte=1:Nmonte
             P = PU;  
             
             % Rank test for observability matrix M
-%             dimPHI = size(PHI,1);
-%             dimH = size(H,2);
-%             if (dimPHI - dimH) ~= 0
-%                 PHI = blkdiag(PHI,eye(dimH-dimPHI));
-%             end
-            M_curr = H*PHI;
-            M = [M; M_curr];
-            Mrank = [Mrank; rank(M)];
-            nullSpaceDim = [nullSpaceDim; size(M,2) - rank(M)];
             PHI = Phi*PHI;
+            M_curr = H*PHI;
+%             M_curr(abs(M_curr)<eps) = 0;
+            M = [M; M_curr];
+%             t_curr
+%             cond(M)
+            Mrank = [Mrank; rank(M)];
+            nullSpaceDim = [nullSpaceDim; size(M,2) - rank(M)]; 
+
         else
             x_i = xP_i;
             v_i = vP_i;
             q_i2b = qP_i2b; 
             pfVec_i = pfVecP_i;
-            P = PP;  
+            P = PP; 
+            PHI = Phi*PHI;
         end
 %         if ~isempty(pfVec_i)
 %              figure(9); plot3(pfVec_i(1,:),pfVec_i(2,:),pfVec_i(3,:),'*'); axis equal; pause(.01)
@@ -353,7 +358,7 @@ title("Trajectory of body frame (red = x_b, green = y_b, blue = z_b)")
 axis equal
 
 figure(10); plot(nullSpaceDim, 'LineWidth', 2); title('Dimension of nullspace of H-\Phi matrix')
-figure(11); plot(Mrank, 'LineWidth', 2); title('Rank of M')
+% figure(11); plot(Mrank, 'LineWidth', 2); title('Rank of M')
 
 function [cm,pfTagsNew,pfTagsObserved,V] = cameraMeasurement(p,q,pfTags,I)
 %CAMERAMEASUREMENT Generates a simulated camera measurement of features in
@@ -368,7 +373,7 @@ mask = (map_b(3,:) > 0);% & (abs(map_b(2,:)./map_b(3,:)) <= 1.75) ...
    % & (abs(map_b(1,:)./map_b(3,:)) <= 1.75); %points in front of the camera, roughly 60 deg FOV up/down left/right
 map_b = map_b(:,mask); 
 nPtsInView = size(map_b,2);
-cm = map_b(1:2,:)./map_b(3,:) + Vc*randn(2,nPtsInView); %add noise
+cm = map_b(1:2,:)./map_b(3,:) + 0*Vc*randn(2,nPtsInView); %add noise
 pfTagsObserved = find(mask);
 pfTagsNew = setdiff(pfTagsObserved,pfTags); % Did we observe any new features?
 V = Vc^2*eye(2*nPtsInView);
@@ -410,17 +415,17 @@ function [rm,pfTagsNew,pfTagsObserved,V] = rangeMeasurement(p,q,pfTags,I)
 %RANGEMEASUREMENT Generates a simulated range measurement of features in
 %I.map
 Vr = .01; % 1 cm of range noise
-T_i2b = quat2dcm(q'); 
+% T_i2b = quat2dcm(q'); 
 pf_mat = I.map; %feature positions
 nPts = I.nPts;
 p_mat = repmat(p,1,nPts);
-map_b = T_i2b*(pf_mat - p_mat);
+map_b = (pf_mat - p_mat); %T_i2b*(pf_mat - p_mat);
 mask = [1]; % only looking at 1 feature
 %     (map_b(3,:) > 0) & (abs(map_b(2,:)./map_b(3,:)) <= 1.75) ...
 %     & (abs(map_b(1,:)./map_b(3,:)) <= 1.75); %points in front of the range measurement device, roughly 60 deg FOV up/down left/right
 map_b = map_b(:,mask); 
 nPtsInView = size(map_b,2);
-rm = sqrt(map_b(1,:).^2 + map_b(2,:).^2 + map_b(3,:).^2) + Vr*randn();
+rm = sqrt(map_b(1,:).^2 + map_b(2,:).^2 + map_b(3,:).^2) + 0*Vr*randn();
 pfTagsObserved = find(mask);
 pfTagsNew = setdiff(pfTagsObserved,pfTags); % Did we observe any new features?
 V = Vr^2*eye(nPtsInView);
@@ -454,7 +459,7 @@ zHat = sqrt(pfVecDiff(1,:).^2 + pfVecDiff(2,:).^2 + pfVecDiff(3,:).^2);
 zHat = zHat(:);
 end
 
-function [xU_i, vU_i, qU_i2b, baU, bgU, pfVecU_i, PU, H] = update(z, pfTagsObserved, pfTags, x_i, v_i, q_i2b, ba, bg, pfVec_i,P,V,I,x_true,q_true_i2b,pf_true)
+function [xU_i, vU_i, qU_i2b, baU, bgU, pfVecU_i, PU, H] = update(t,z, pfTagsObserved, pfTags, x_i, v_i, q_i2b, ba, bg, pfVec_i,P,V,I,x_true,q_true_i2b, ba_true, bg_true, pf_true)
 [zHat,H] = cameraMeasModel(x_true,q_true_i2b,pf_true,pfTags,pfTagsObserved,I);
 K = (P*H')/(H*P*H' + V);
 delStates = K*(z-zHat);
@@ -469,7 +474,7 @@ for ii = 1:nPtsInView
     indObserved = find(pfTags==pfTagsObserved(ii));
     pfVecU_i(:,indObserved) = pfVecU_i(:,indObserved) + delpf(:,ii);
 end
-%%%%% ADDITIVE UPDATE %%%%%
+%%%%% ADDITIVE UPDATE %%%%%Ph
 % qU_i2b = q_i2b + [0;delStates(7:9)];
 %%%%%%
 %%%%%% MULITPLICATIVE UPDATE %%%%%
@@ -486,7 +491,7 @@ PU = (eye(18) - K*H)*P*(eye(18) - K*H)' + K*V*K'; %Joseph form covariance update
 end
 
 
-function [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi] = prop(am_b, wm_b, x_i, v_i, q_i2b, ba, bg, pfVec_i, dt, P, PSDa, PSDw, qf)
+function [xP_i, vP_i, qP_i2b, baP, bgP, pfVecP_i, PP, Phi] = prop(am_b, wm_b, states_km1, states_k, ba, bg, pfVec_i, dt, P, PSDa, PSDw, qf, I, t_curr)
 % x = [x_i, v_i, a_ib]
 % x_i : 3x1 IMU position in the inertial frame
 % v_i : 3x1 IMU velocity in the inertial frame
@@ -497,29 +502,40 @@ function [xP_i, vP_i, qP_i2b, pfVecP_i, PP, Phi] = prop(am_b, wm_b, x_i, v_i, q_
 % G = 3x3 gravity matrix
 %
 % Covariance propagation:
-% P(k+1) = Phi*P*Phi' + B*Q*B'
+% P(k+1) = Phi*P*Phi' + G*Q*G'
+x_km1_i = states_km1(1:3);
+v_km1_i = states_km1(4:6); 
+q_km1_i2b = states_km1(7:10);
+x_k_i = states_k(1:3); % states at time k only used for observability analysis
+v_k_i = states_k(4:6);
+q_k_i2b = states_k(7:10);
+% ba = zeros(3,1); % true biases are zero (see IMU measurement generation)
+% bg = zeros(3,1); 
 
 % Pre-processing
 % G = zeros(3,3);
 g = 9.81; % m/s^2
 gVec_i = [0; 0; -g];
-T_i2b_hat = quat2dcm(q_i2b'); %inertial-to-body DCM
+T_i2b_hat = quat2dcm(q_km1_i2b'); %inertial-to-body DCM
 a_hat = am_b - ba;
 dth_b_hat = (wm_b - bg) * dt; %delta theta [rad]
 
 % Propagate states
-xP_i = x_i + v_i*dt + 0.5*(T_i2b_hat'*a_hat - gVec_i)*dt^2;
-vP_i = v_i + (T_i2b_hat'*a_hat - gVec_i)*dt; 
+xP_i = x_km1_i + v_km1_i*dt + 0.5*(T_i2b_hat'*a_hat - gVec_i)*dt^2;
+vP_i = v_km1_i + (T_i2b_hat'*a_hat - gVec_i)*dt; 
 nt = norm(dth_b_hat);
 if nt>1e-10
     qdth_b = [cos(0.5*nt), ...
         (dth_b_hat/nt)'.*sin(0.5*nt)];
-    qP_i2b = quatnormalize(quatmultiply(q_i2b',qdth_b))';
+    qP_i2b = quatnormalize(quatmultiply(q_km1_i2b',qdth_b))';
 else
-    qP_i2b = q_i2b;
+    qP_i2b = q_km1_i2b;
 end
+baP = ba; 
+bgP = bg;
 pfVecP_i = pfVec_i;
 nPts = size(pfVec_i,2);
+
 
 % Uncertainties
 Qg = dt*PSDw*eye(3);
@@ -530,9 +546,9 @@ Q = blkdiag(Qg, Qbg, Qa, Qba);
 
 % Propagate covariance
 % See Hesch et al 2014
-F_x_x = zeros(3); F_x_v = eye(3); F_x_a = zeros(3); F_x_ba = zeros(3); F_x_bg = zeros(3); 
+F_x_x = zeros(3); F_x_v = eye(3); F_x_a = zeros(3);  F_x_ba = zeros(3); F_x_bg = zeros(3); 
 F_v_x = zeros(3); F_v_v = zeros(3); F_v_a = -T_i2b_hat'*cpe(a_hat); F_v_ba = -T_i2b_hat'; F_v_bg = zeros(3);
-F_a_x = zeros(3); F_a_v = zeros(3); F_a_a = -cpe(wm_b - bg); F_a_ba = zeros(3); F_a_bg = -eye(3);
+F_a_x = zeros(3); F_a_v = zeros(3); F_a_a = -cpe(wm_b - bg);  F_a_ba = zeros(3); F_a_bg = -eye(3);
 F_ba_x = zeros(3); F_ba_v = zeros(3); F_ba_a = zeros(3); F_ba_ba = zeros(3); F_ba_bg = zeros(3); 
 F_bg_x = zeros(3); F_bg_v = zeros(3); F_bg_a = zeros(3); F_bg_ba = zeros(3); F_bg_bg = zeros(3); 
 F = [F_x_x, F_x_v, F_x_a, F_x_ba, F_x_bg; 
@@ -540,10 +556,28 @@ F = [F_x_x, F_x_v, F_x_a, F_x_ba, F_x_bg;
      F_a_x, F_a_v, F_a_a, F_a_ba, F_a_bg;
      F_ba_x, F_ba_v, F_ba_a, F_ba_ba, F_ba_bg; 
      F_bg_x, F_bg_v, F_bg_a, F_bg_ba, F_bg_bg];
-Phi = expm(F*dt); %xdot = Ax => x = e^(At)x0.
 if nPts > 0
-    Phi = blkdiag(Phi,eye(3*nPts));
+    F = blkdiag(F,zeros(3*nPts));
 end
+% [~,PhiHist] = ode45(@(t,Phi) PhiODE(t,Phi,q_km1_i2b,t_curr,I),[t_curr,t_curr+dt], eye(18));
+% Phi = reshape(PhiHist(end,:),18,18);
+Phi = expm(F*dt); %xdot = Ax => x = e^(At)x0.
+
+% Make sure rotation terms of Phi are extra nice
+% See Hesch et al "Consistency Analysis and Implrovement of Vision-Aided
+% Inertial Navigation," IEEE Transactions on Robotics, Feb. 2014. Eqns. 46,
+% 48, 104.
+% aa_init = cpe(wm_b);
+% aa_init = aa_init(:);
+% [~,aaHist] = ode45(@(t,aa) aaODE(t,aa,I),[t_curr,t_curr+dt],aa_init);
+% Phi_a_a = expm(reshape(-aaHist(end,:),3,3));
+% Phi(7:9,7:9) = Phi_a_a; 
+Phi(7:9,7:9) = eye(3); % should be eye(3) for no rotation
+Phi_v_a = -cpe((v_k_i - v_km1_i) + gVec_i*dt)*quat2dcm(q_km1_i2b'); 
+Phi(4:6,7:9) = Phi_v_a;
+Phi_x_a = cpe(x_km1_i + v_km1_i*dt + 0.5*gVec_i*dt^2 - x_k_i)*quat2dcm(q_km1_i2b');
+Phi(1:3,7:9) = Phi_x_a;
+% Phi(abs(Phi)<eps) = 0;
 
 G_Qg_x = zeros(3); G_Qbg_x = zeros(3); G_Qa_x = zeros(3); G_Qba_x = zeros(3); 
 G_Qg_v = zeros(3); G_Qbg_v = zeros(3); G_Qa_v = -T_i2b_hat'; G_Qba_v = zeros(3);
@@ -552,11 +586,12 @@ G_Qg_ba = zeros(3); G_Qbg_ba = zeros(3); G_Qa_ba = zeros(3);  G_Qba_ba = eye(3);
 G_Qg_bg = zeros(3); G_Qbg_bg = eye(3); G_Qa_bg = zeros(3); G_Qba_bg = zeros(3); 
  
 G = [G_Qg_x, G_Qbg_x, G_Qa_x, G_Qba_x;
-    G_Qg_v, G_Qbg_v, G_Qa_v, G_Qba_v;
-    G_Qg_a, G_Qbg_a,  G_Qa_a, G_Qba_a; 
+     G_Qg_v, G_Qbg_v, G_Qa_v, G_Qba_v;
+     G_Qg_a, G_Qbg_a,  G_Qa_a, G_Qba_a; 
     G_Qg_ba, G_Qbg_ba, G_Qa_ba, G_Qba_ba;
     G_Qg_bg, G_Qbg_bg, G_Qa_bg, G_Qba_bg;
     zeros(3*nPts,12)];
+% G(G<eps) = 0;
      
 % B_xna = -0.5*dt*T_i2b_hat';
 % B_xng = zeros(3,3);
@@ -569,7 +604,7 @@ G = [G_Qg_x, G_Qbg_x, G_Qa_x, G_Qba_x;
 %     B_ana, B_ang; ...
 %     zeros(3*nPts,6)];
 
-PP = Phi*P*Phi' + G*Q*G'*dt; % Maybeck p. 172.
+PP = Phi*P*Phi' + G*Q*G'; %*dt; % Maybeck p. 172.
 
 end
 
@@ -583,3 +618,48 @@ vdot = a_i;
 qdot = quatmultiply(q',[0,0.5*w_b'])';
 statesDot = [xdot;vdot;qdot];
 end
+
+function [aaDot] = aaODE(t,aa,I)
+[~,w,~] = I.trueInput(t);
+aaDot = cpe(w);
+aaDot = aaDot(:);
+end
+
+% function [PhiDot] = PhiODE(t,Phi,q_init,t0,I)
+%     Phi = reshape(Phi,18,18);
+%     [at_i,wt_b,~] = I.trueInput(t);
+%     t_curr = t;
+% %     if t_curr>t0
+% %         [~,qHist] = ode45(@(t,q) qODE(t,q,I),[t0,t_curr],q_init);
+% %         qt = qHist(end,:);
+% %         Tt = quat2dcm(qt);
+% %     else
+% %         qt = q_init';
+% %         Tt = quat2dcm(qt);
+% %     end
+%     Tt = quat2dcm(q_init'); % DCM stays the same throughout the run
+%     F_x_x = zeros(3); F_x_v = eye(3); F_x_a = zeros(3); F_x_ba = zeros(3); F_x_bg = zeros(3); 
+%     F_v_x = zeros(3); F_v_v = zeros(3); F_v_a = -Tt'*cpe(at_i); F_v_ba = -Tt'; F_v_bg = zeros(3);
+%     F_a_x = zeros(3); F_a_v = zeros(3); F_a_a = -cpe(wt_b); F_a_ba = zeros(3); F_a_bg = -eye(3);
+%     F_ba_x = zeros(3); F_ba_v = zeros(3); F_ba_a = zeros(3); F_ba_ba = zeros(3); F_ba_bg = zeros(3); 
+%     F_bg_x = zeros(3); F_bg_v = zeros(3); F_bg_a = zeros(3); F_bg_ba = zeros(3); F_bg_bg = zeros(3); 
+%     F = [F_x_x, F_x_v, F_x_a, F_x_ba, F_x_bg; 
+%          F_v_x, F_v_v, F_v_a, F_v_ba, F_v_bg; 
+%          F_a_x, F_a_v, F_a_a, F_a_ba, F_a_bg;
+%          F_ba_x, F_ba_v, F_ba_a, F_ba_ba, F_ba_bg; 
+%          F_bg_x, F_bg_v, F_bg_a, F_bg_ba, F_bg_bg];
+%     F = blkdiag(F,zeros(3));
+%     PhiDot = F*Phi;
+%     PhiDot = PhiDot(:);
+% end
+
+% function [qDot] = qODE(t,q,I)
+%     [~,wt_b,~] = I.trueInput(t);
+%     qDot = quatmultiply(q',[0,0.5*wt_b'])';
+% end
+
+% function [qDot] = qODE(t,I)
+% [~, w, ~] = I.trueInput(t)
+% qDot = cpe(w);
+% qDot = qDot(:);
+% end
