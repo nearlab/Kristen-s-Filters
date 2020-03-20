@@ -34,7 +34,7 @@ x_cb = [0,0,0]'; %position of camera in body frame
 sig_Im = .01;
 Vc = diag([sig_Im^2,sig_Im^2]);
 
-Nmonte = 10;
+Nmonte = 2;
 %%%Initialization
 %measurement vectors
 wmVec = zeros(T/dt,3,Nmonte);
