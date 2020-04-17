@@ -22,6 +22,7 @@ plotTrajectory(t_hist,states_hist_true,1,I)
 %q: +/- .1 rad
 PSDa = (.7/60)^2; % [(m/s)^2/s] = 0.7 m/s/sqrt(hr) %%
 PSDg = (0.15*pi/180/60)^2; % [rad^2/s] = 0.15 deg/sqrt(hr) %%
+Pmap = diag([.03^2, .03^2, .03^2]);
 Px = diag([.03^2, .03^2, .03^2]);
 Pv = diag([.01^2, .01^2, .01^2]);
 Palpha = diag([0.01^2, 0.01^2, 0.01^2]);
@@ -34,7 +35,7 @@ x_cb = [0,0,0]'; %position of camera in body frame
 sig_Im = .01;
 Vc = diag([sig_Im^2,sig_Im^2]);
 
-Nmonte = 2;
+Nmonte = 5;
 %%%Initialization
 %measurement vectors
 wmVec = zeros(T/dt,3,Nmonte);
@@ -65,15 +66,15 @@ psiVec = zeros(T/dt,Nmonte);
 
 for iMonte=1:Nmonte
     M = msckfDataManager(); % re-initialize the data manager on each run
-
+    map_error = chol(Pmap)*randn(3,1);
     q_true_i2b = states_hist_true(1,7:10)';
     T_i2b_true = quat2dcm(q_true_i2b');
     [a0_true_i, w0_true_b] = I.trueInput(0);
     
-    wmVec(1,:,iMonte) = w0_true_b'; %  + sqrt(PSDg/dt)*randn(3,1)'; %%
-    amVec(1,:,iMonte) = (T_i2b_true*a0_true_i)'; % + sqrt(PSDa/dt)*randn(3,1))'; %%
+    wmVec(1,:,iMonte) = w0_true_b' + sqrt(PSDg/dt)*randn(3,1)'; %%
+    amVec(1,:,iMonte) = (T_i2b_true*a0_true_i)' + sqrt(PSDa/dt)*randn(3,1)'; %%
 
-    P = blkdiag(Px, Pv, Palpha);
+    P = blkdiag(Px + Pmap, Pv, Palpha);
     PxVec(1,iMonte) = P(1,1);
     PyVec(1,iMonte) = P(2,2);
     PzVec(1,iMonte) = P(3,3);
@@ -85,7 +86,7 @@ for iMonte=1:Nmonte
     PpsiVec(1,iMonte) = P(9,9);
     
     
-    x_i = x_init + chol(Px)*randn(3,1);  % inertial %%
+    x_i = x_init + chol(Px)*randn(3,1) + map_error;  % inertial %%
     v_i = v_init + chol(Pv)*randn(3,1);  % inertial %%
     da = chol(Palpha)*randn(3,1);  % body %%
     nt = norm(da);
@@ -120,37 +121,25 @@ for iMonte=1:Nmonte
 %     X_Phi_test = zeros(3,T/dt);
     
     for ii = 2:(T/dt)
-        t_curr = (ii-1)*dt;
-        q_true_i2b = states_hist_true(ii,7:10)';
-        x_true_i = states_hist_true(ii,1:3)';
+        t_curr = (ii-1)*dt; % propagating from time (ii-1)*dt to time (ii)*dt
+%         x_true_i = states_hist_true(ii,1:3)';
         T_i2b_true = quat2dcm(states_hist_true(ii-1,7:10)); %inertial-to-body DCM
         
-%         if t_curr == 54.01
-%             t_curr
-%         end
-%          if mod(ii,1000) == 0
-%             figure(2); hold on
-%             vv = [1;0;0];
-%             vvp = T_i2b_true*vv;
-%             quiver3(0,0,0,vv(1),vv(2),vv(3))
-%             quiver3(0,0,0,vvp(1),vvp(2),vvp(3))
-%         end
-        
         %measurement
-        [a_true_i,w_true_b] = I.trueInput(t_curr);
+        [a_true_i,w_true_b] = I.trueInput((ii-2)*dt);
 %         a_true_b = T_i2b_true*a_true_i;
-        am_b = T_i2b_true*a_true_i; % + sqrt(PSDa/dt)*randn(3,1); %body acceleration [m/s^2] 3
-        wm_b = w_true_b; % + sqrt(PSDg/dt)*randn(3,1); %body angular rate [rad/s] %%
+        am_b = T_i2b_true*a_true_i + sqrt(PSDa/dt)*randn(3,1); %body acceleration [m/s^2] 3
+        wm_b = w_true_b + sqrt(PSDg/dt)*randn(3,1); %body angular rate [rad/s] 
         
         %propagation
         [xP_i, vP_i, qP_i2b, poseVecP_i2c, PP] = prop(am_b, wm_b, x_i, v_i, q_i2b, poseVec_i2c, dt, P, PSDa, PSDg, qf);
-        am_b = T_i2b_true*(vP_i-v_i)/dt;
+%         am_b = T_i2b_true*(vP_i-v_i)/dt;
         
-        L = eig(PP);
-        if ~isreal(L) || min(real(L)) < 0
-            L;
-        end
-        T_i2b_true = quat2dcm(q_true_i2b');
+%         L = eig(PP);
+%         if ~isreal(L) || min(real(L)) < 0
+%             L;
+%         end
+%         T_i2b_true = quat2dcm(q_true_i2b');
         
         %store propagated values and measurements
         amVec(ii,:,iMonte) = am_b';
@@ -187,6 +176,7 @@ for iMonte=1:Nmonte
 %         else
 %             q_true_i2b = q_init;
 %         end
+        q_true_i2b = states_hist_true(ii,7:10)';
         qP_b2i = [qP_i2b(1); -qP_i2b(2:4)];
         dq_b = quatmultiply(qP_b2i',q_true_i2b')';
         phiVec(ii,iMonte) = 2*dq_b(2)/dq_b(1);
@@ -287,11 +277,12 @@ for iMonte=1:Nmonte
                     currPkg = M.pfPkgList(pkgInd);
                     % Least-squares estimate feature location based on
                     % observation data in the point package
-                    pfHat_i = currPkg.p_true; %sqrt(1e-4)*randn(3,1); %lsEstimatePf(currPkg, pfVec_i2c, M); %%
-                    L = eig(PP);
-                    if ~isreal(L) || min(real(L)) < 0
-                        L;
-                    end
+                    lsEstimatePf(currPkg,poseVec_i2c,M)
+                    pfHat_i = currPkg.p_true + sqrt(1e-6)*randn(3,1) + map_error; 
+%                     L = eig(PP);
+%                     if ~isreal(L) || min(real(L)) < 0
+%                         L;
+%                     end
                     if mm == 1
                         [xU_i, vU_i, qU_i2b, poseVecU_i2c, PU] = update(currPkg, pfHat_i, xP_i, vP_i, qP_i2b, poseVecP_i2c, PP, sig_Im, I, M, qf); 
                     else
@@ -504,53 +495,63 @@ end
 N = size(poseVec_i2c,2);
 n = length(pose_inds);
 
-zHat = zeros(2,n);
-for ii = 1:n
-    q = poseVec_i2c(1:4,pose_inds(ii));
-    p = poseVec_i2c(5:7,pose_inds(ii));
-    T_i2c = quat2dcm(q'); 
-    pfHat_c = T_i2c*(pfHat_i - p);
-    zHat(:,ii) = (1/pfHat_c(3))*[pfHat_c(1); pfHat_c(2)];
-end
+% zHat = zeros(2,n);zHat = zeros(2,n); % inefficient! remove later
+% for ii = 1:n
+%     q = poseVec_i2c(1:4,pose_inds(ii));
+%     p = poseVec_i2c(5:7,pose_inds(ii));
+%     T_i2c = quat2dcm(q'); 
+%     pfHat_c = T_i2c*(pfHat_i - p);
+%     zHat(:,ii) = (1/pfHat_c(3))*[pfHat_c(1); pfHat_c(2)];
+% end
+% zHat = zHat(:);
 % plotMeasModel(zHat,ptPkg.tag,7)
-% zHat(1,:) = -zHat(1,:);
-zHat = zHat(:);
 
 % See MSCKF Tech. Rpt. 2006 for Hx, Hf equations
 Hx = zeros(2*n, 9+6*N);
 Hf = zeros(2*n, 3);
+zHat = zeros(2,n);
 for ii = 1:n
     q = poseVec_i2c(1:4,pose_inds(ii));
     p = poseVec_i2c(5:7,pose_inds(ii)); %%%
     T_i2c = quat2dcm(q');
     pfHat_c = T_i2c*(pfHat_i - p);
+    zHat(:,ii) = (1/pfHat_c(3))*[pfHat_c(1); pfHat_c(2)];
     J = 1/pfHat_c(3)*[1, 0, -pfHat_c(1)/pfHat_c(3); ...
                       0, 1, -pfHat_c(2)/pfHat_c(3)];
     idx = 9+(6*pose_inds(ii)-5:6*pose_inds(ii));
     Hx(2*ii-1:2*ii,idx) = [J*qf.cpe(pfHat_c), -J*T_i2c];
     Hf(2*ii-1:2*ii,:) = J*T_i2c;
 end
+zHat = zHat(:);
+% plotMeasModel(zHat,ptPkg.tag,7)
 
 % Find relevant measurements
 z = ptPkg.meas_list(:,meas_inds);
 z = z(:);
 
-% Form matrix H0 and residual r0 using Givens rotations
+% Form matrix H0 and residual r0
 r = z-zHat;
 % figure(100); hold on; plot(t_list(end), r, '*');
-% H0 = zeros(size(Hx));
-% r0 = zeros(size(r));
-% for ii = 1:3
-%     for jj = size(Hf,1):-1:ii+1
-%         [G,~] = planerot(Hf(jj-1:jj,ii));
-%         H0(jj-1:jj,:) = G'*Hx(jj-1:jj,:);
-%         r0(jj-1:jj) = G'*r(jj-1:jj);
-%     end
-% end
+% Givens rotations formulation
+H0 = zeros(size(Hx));
+r0 = zeros(size(r));
+for ii = 1:3
+    for jj = size(Hf,1):-1:2
+        [G,~] = planerot(Hf(jj-1:jj,ii));
+        Hf(jj-1:jj,ii) = G*Hf(jj-1:jj,ii);
+        H0(jj-1:jj,:) = G*Hx(jj-1:jj,:);
+        r0(jj-1:jj) = G*r(jj-1:jj);
+    end
+end
 % H0 = H0(4:end-3,:);
 % r0 = r0(4:end-3,:);
-H0 = Hx;
-r0 = r;
+% Nullspace formulation
+% A = null(Hf'); % left nullspace (i.e. Hf'*A = 0 ==> A'*Hf = 0)
+% H0 = A'*Hx;
+% r0 = A'*Hf;
+% No adjustment for state correlation to errors in pf
+% H0 = Hx;
+% r0 = r;
 end
 
 function [xU_i, vU_i, qU_i2b, poseVecU_i2c, PU] = update(currPkg, pfHat_i, x_i, v_i, q_i2b, poseVec_i2c,P,sig_Im,I,M,qf)
@@ -598,10 +599,10 @@ for ii = 1:M.nPoses
 end
 N = 9 + 6*size(poseVec_i2c,2);
 PU = (eye(N) - K*H0)*P*(eye(N) - K*H0)' + K*V*K'; %Joseph form covariance update (Sola 63)
-L = eig(PU);
-if ~isreal(L) || min(real(L)) < 0
-    L;
-end
+% L = eig(PU);
+% if ~isreal(L) || min(real(L)) < 0
+%     L;
+% end
 % Non-update!
 % xU_i = x_i;
 % vU_i = v_i;
@@ -741,15 +742,29 @@ qdot = quatmultiply(q',[0,0.5*w_b'])';
 statesDot = [xdot;vdot;qdot];
 end
 
-function pfHat = lsEstimatePf(pfPkg)
-p1 = pfPkg.pose_list(5:7,1); %first recorded camera position in inertial frame
-T_i2c1 = quat2dcm(pfPkg.q_list(:,1)'); %first intertial-to-camera quaternion
+function pfHat = lsEstimatePf(pfPkg,poseVec,M)
+t_list = pfPkg.t_list;
+nt = length(t_list);
+pose_inds = [];
+meas_inds = [];
+for ii = 1:nt
+    t = t_list(ii);
+    ind = find(M.poseTimestampList == t);
+    if ~isempty(ind)
+        pose_inds = [pose_inds, ind];
+        meas_inds = [meas_inds, ii];
+    end
+end
+pose_list = poseVec(:,pose_inds);
+meas_list = pfPkg.meas_list(:,meas_inds);
+p1 = pose_list(5:7,1); %first recorded camera position in inertial frame
+T_i2c1 = quat2dcm(pose_list(1:4,1)'); %first intertial-to-camera quaternion
 p0 = T_i2c1'*[0;0;1] + p1; %guess that the point was 1m in front of the first camera
 X0 = p0(1); Y0 = p0(2); Z0 = p0(3);
 a0 = X0/Z0; b0 = Y0/Z0; rho0 = 1/Z0;
 abr0 = [a0; b0; rho0]; %guess values of alpha, beta, and rho that minimize error in nonlinear measurement
-abrHat = lsqnonlin(@(abr)lsFun(abr,pfPkg.meas_list,pfPkg.pose_list(1:4,:), ...
-    pfPkg.pose_list(5:7,:)),abr0);
+abrHat = lsqnonlin(@(abr)lsFun(abr,meas_list,pose_list(1:4,:), ...
+    pose_list(5:7,:)),abr0);
 aHat = abrHat(1); bHat = abrHat(2); rhoHat = abrHat(3);
 pfHat = (1/rhoHat)*T_i2c1'*[aHat; bHat; 1] + p1;
 end
