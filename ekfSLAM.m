@@ -31,7 +31,7 @@ cameraRate = 5;
 T_b2c = eye(3); %body to camera
 Vc = diag([.001^2,.001^2]);
 
-Nmonte = 50;
+Nmonte = 1;
 %%%Initialization
 %measurement vectors
 wmVec = zeros(T/dt,3,Nmonte);
