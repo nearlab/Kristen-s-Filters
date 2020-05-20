@@ -12,6 +12,7 @@ dt = I.dt;
 tVec = I.tVec;
 plotField(I,1);
 tspan = [0,T];
+gVec_i = [0;0;-9.81];
 
 states_init = [x_init; v_init; q_init];
 [t_hist,states_hist_true] = ode45(@(t,states)trueKinematics(t,states,I,qf),tVec,states_init);
@@ -28,7 +29,7 @@ Pv = diag([.01^2, .01^2, .01^2]);
 Palpha = diag([0.01^2, 0.01^2, 0.01^2]);
 
 %sensor
-cameraRate = 5; %%
+cameraRate = 10; %%
 T_b2c = eye(3); %body to camera 
 q_b2c = [1,0,0,0]'; 
 x_cb = [0,0,0]'; %position of camera in body frame
@@ -71,8 +72,8 @@ for iMonte=1:Nmonte
     T_i2b_true = quat2dcm(q_true_i2b');
     [a0_true_i, w0_true_b] = I.trueInput(0);
     
-    wmVec(1,:,iMonte) = w0_true_b' + sqrt(PSDg/dt)*randn(3,1)'; %%
-    amVec(1,:,iMonte) = (T_i2b_true*a0_true_i)' + sqrt(PSDa/dt)*randn(3,1)'; %%
+    wmVec(1,:,iMonte) = w0_true_b' + sqrt(PSDg/dt)*randn(3,1)'; 
+    amVec(1,:,iMonte) = (T_i2b_true*(a0_true_i - gVec_i))' + sqrt(PSDa/dt)*randn(3,1)'; 
 
     P = blkdiag(Px + Pmap, Pv, Palpha);
     PxVec(1,iMonte) = P(1,1);
@@ -128,7 +129,7 @@ for iMonte=1:Nmonte
         %measurement
         [a_true_i,w_true_b] = I.trueInput((ii-2)*dt);
 %         a_true_b = T_i2b_true*a_true_i;
-        am_b = T_i2b_true*a_true_i + sqrt(PSDa/dt)*randn(3,1); %body acceleration [m/s^2] 3
+        am_b = T_i2b_true*(a_true_i - gVec_i) + sqrt(PSDa/dt)*randn(3,1); %body acceleration [m/s^2] 3
         wm_b = w_true_b + sqrt(PSDg/dt)*randn(3,1); %body angular rate [rad/s] 
         
         %propagation
@@ -277,7 +278,7 @@ for iMonte=1:Nmonte
                     currPkg = M.pfPkgList(pkgInd);
                     % Least-squares estimate feature location based on
                     % observation data in the point package
-                    lsEstimatePf(currPkg,poseVec_i2c,M)
+%                     lsEstimatePf(currPkg,poseVec_i2c,M)
                     pfHat_i = currPkg.p_true + sqrt(1e-6)*randn(3,1) + map_error; 
 %                     L = eig(PP);
 %                     if ~isreal(L) || min(real(L)) < 0
@@ -644,10 +645,11 @@ function [xP_i, vP_i, qP_i2b, poseVecP_i2c, PP] = prop(am_b, wm_b, x_i, v_i, q_i
 %
 % Covariance propagation:
 % P(k+1) = Phi*P*Phi' + B*Q*B'
+gVec_i = [0;0;-9.81];
 
 % Pre-processing
 T_i2b_hat = quat2dcm(q_i2b'); %inertial-to-body DCM
-am_i = T_i2b_hat' * am_b;
+am_i = T_i2b_hat' * am_b + gVec_i;
 dth_b = wm_b * dt; %delta theta [rad]
 
 % Propagate states
@@ -718,10 +720,10 @@ B = [B_xna, B_xng;...
 %     P_IMU_IMU = P;
 %     PP = Phi*P_IMU_IMU*Phi' + B*Q*B';
 % end
-L = eig(PP);
-if ~isreal(L) || min(real(L)) < 0
-    L;
-end
+% L = eig(PP);
+% if ~isreal(L) || min(real(L)) < 0
+%     L;
+% end
 
 end
 
@@ -766,7 +768,7 @@ abr0 = [a0; b0; rho0]; %guess values of alpha, beta, and rho that minimize error
 abrHat = lsqnonlin(@(abr)lsFun(abr,meas_list,pose_list(1:4,:), ...
     pose_list(5:7,:)),abr0);
 aHat = abrHat(1); bHat = abrHat(2); rhoHat = abrHat(3);
-pfHat = (1/rhoHat)*T_i2c1'*[aHat; bHat; 1] + p1;
+pfHat = (1/rhoHat)*T_i2c1'*[aHat; bHat; 1] + p1
 end
 
 function dz = lsFun(abr,z_list,q_list,p_list)
@@ -780,7 +782,7 @@ for ii = 1:n
     p = p_list(:,ii) - p1; %position of camera ii in frame 1
     T = quat2dcm(q_list(:,ii)')*T_i2c1'; %rotation from frame 1 to frame ii
     h = T*[a;b;1] + rho*p;
-    z(2*ii-1:2*ii) = (1/h(3))*[h(1); h(2)];
+    zHat(2*ii-1:2*ii) = (1/h(3))*[h(1); h(2)];
 end
 dz = zHat - z;
 end
