@@ -27,6 +27,7 @@ Pmap = diag([.03^2, .03^2, .03^2]);
 Px = diag([.03^2, .03^2, .03^2]);
 Pv = diag([.01^2, .01^2, .01^2]);
 Palpha = diag([0.01^2, 0.01^2, 0.01^2]);
+P_alpha_map = diag([0.01^2, 0.01^2, 0.01^2]);
 
 %sensor
 cameraRate = 10; %%
@@ -65,9 +66,23 @@ phiVec = zeros(T/dt,Nmonte);
 thVec = zeros(T/dt,Nmonte);
 psiVec = zeros(T/dt,Nmonte);
 
+NPNMat = [];
+
 for iMonte=1:Nmonte
     M = msckfDataManager(); % re-initialize the data manager on each run
-    map_error = chol(Pmap)*randn(3,1);
+    map_error = chol(Pmap)*randn(3,1); 
+    Nsp = [];
+    Nmeas = 0;
+    Nupdate = 0;
+    NPNVec = [];
+    tUpdateVec = [];
+%     map_angle_error = chol(P_alpha_map)*randn(3,1);
+%     nt_map = 0*norm(map_angle_error);
+%     if nt_map > 1e-10
+%         dq_map = [cos(0.5*nt_map), (map_angle_error/nt_map)'.*sin(0.5*nt_map)];
+%     else 
+%         dq_map = [1, 0, 0, 0];
+%     end        
     q_true_i2b = states_hist_true(1,7:10)';
     T_i2b_true = quat2dcm(q_true_i2b');
     [a0_true_i, w0_true_b] = I.trueInput(0);
@@ -86,9 +101,10 @@ for iMonte=1:Nmonte
     PthVec(1,iMonte) = P(8,8);
     PpsiVec(1,iMonte) = P(9,9);
     
-    x_i = x_init + chol(Px)*randn(3,1) + map_error;  % inertial 
+%     x_i = quatrotate(dq_map, x_init' + (chol(Px)*randn(3,1))')' + map_error;  % inertial 
+    x_i = x_init + chol(Px)*randn(3,1);
     v_i = v_init + chol(Pv)*randn(3,1);  % inertial 
-    da = chol(Palpha)*randn(3,1);  % body 
+    da = chol(Palpha)*randn(3,1); % + map_angle_error;  % body 
     nt = norm(da);
     if nt>1e-10
         dq = [cos(0.5*nt), ...
@@ -166,9 +182,10 @@ for iMonte=1:Nmonte
         PthVec(ii,iMonte) = PP(8,8);
         PpsiVec(ii,iMonte) = PP(9,9);
         
-        
+               
         %update 
-        if mod(ii,cameraRate) == 0            
+        if mod(ii,cameraRate) == 0   
+            Nmeas = Nmeas + 1;
             % Measure
             [cm,pfTagsNew,pfTagsObserved,V] = cameraMeasurement(x_true, q_true_i2b, M.tagList, I);
             nNewPts = length(pfTagsNew);
@@ -210,7 +227,8 @@ for iMonte=1:Nmonte
                     % Least-squares estimate feature location based on
                     % observation data in the point package
 %                     lsEstimatePf(currPkg,poseVec_i2c,M)
-                    pfHat_i = currPkg.p_true + sqrt(1e-6)*randn(3,1) + map_error; 
+%                     pfHat_i = quatrotate(dq_map, currPkg.p_true' + sqrt(1e-6)*randn(3,1)')' + map_error; 
+                    pfHat_i = currPkg.p_true + sqrt(1e-6)*randn(3,1) + map_error;
                     if mm == 1
                         [xU_i, vU_i, qU_i2b, poseVecU_i2c, PU] = update(currPkg, pfHat_i, xP_i, vP_i, qP_i2b, poseVecP_i2c, PP, sig_Im, I, M, qf); 
                     else
@@ -223,6 +241,7 @@ for iMonte=1:Nmonte
             end
             
             if updateFlag == 1
+                Nupdate = Nupdate + 1;
                 x_i = xU_i;
                 v_i = vU_i;
                 q_i2b = qU_i2b; 
@@ -235,8 +254,6 @@ for iMonte=1:Nmonte
                 poseVec_i2c = poseVecP_i2c;
                 P = PP;  
             end
-            
-            updateFlag = 0;
             
             % Store pose
             T_i2b = quat2dcm(q_i2b');
@@ -254,14 +271,32 @@ for iMonte=1:Nmonte
             J = [zeros(3,6), T_b2c, zeros(3,6*(N-1));
                  eye(3), zeros(3), cpe(T_i2b'*x_cb), zeros(3,6*(N-1))]; 
             P = [eye(6*(N-1)+9); J]*P*[eye(6*(N-1)+9); J]';
+            
+            % Augment nullspace
+            Nsp(1:9,1:4) = [eye(3), -cpe(x_i)*gVec_i;
+                        zeros(3), -cpe(v_i)*gVec_i;
+                        zeros(3), quat2dcm(q_i2b')*gVec_i]; % populate top left of nullspace matrix
+            Nsp_curr = [zeros(3), quat2dcm(q_i2b')*gVec_i;
+                        eye(3), -cpe(x_i)*gVec_i];
+            Nsp = [Nsp; Nsp_curr];
 
-            % If there are more than 20 poses, throw out the oldest one
+            % If there are more than 20 poses, throw out the second oldest one
             if M.nPoses > 20
                  poseVec_i2c = poseVec_i2c(:,[1,3:end]); % throw out the second-oldest pose (MSCKF 2007)
                  M.nPoses = M.nPoses - 1; 
-                 M.poseTimestampList(1) = [];
+                 M.poseTimestampList(2) = [];
                  P = P([1:15,22:end],[1:15,22:end]);
+                 Nsp = Nsp([1:15,22:end],:);
             end
+
+            % Nullspace plots
+            if updateFlag == 1
+                NPN = Nsp'*P*Nsp;
+                NPNVec = [NPNVec, diag(NPN)]; 
+                tUpdateVec = [tUpdateVec, t_curr];
+            end
+            
+            updateFlag = 0;
             
         else
             x_i = xP_i;
@@ -271,6 +306,7 @@ for iMonte=1:Nmonte
             P = PP;  
         end
     end
+    NPNMat(:,:,iMonte) = NPNVec;
 end
 
 % Plotting
@@ -368,6 +404,18 @@ end
 hold off
 title("Trajectory of body frame (red = x_b, green = y_b, blue = z_b)")
 axis equal
+
+figure(8);
+NPN_1 = permute(NPNMat(1,:,:),[3,2,1]); NPN_2 = permute(NPNMat(2,:,:),[3,2,1]);
+NPN_3 = permute(NPNMat(3,:,:),[3,2,1]); NPN_4 = permute(NPNMat(4,:,:),[3,2,1]);
+subplot(4,1,1); plot(tUpdateVec,3*sqrt(NPN_1)); 
+subplot(4,1,1); hold on; plot(tUpdateVec,-3*sqrt(NPN_1)); title('Global X 3\sigma');
+subplot(4,1,2); plot(tUpdateVec, 3*sqrt(NPN_2)); 
+subplot(4,1,2); hold on; plot(tUpdateVec, -3*sqrt(NPN_2)); title('Global Y 3\sigma');
+subplot(4,1,3); plot(tUpdateVec,3*sqrt(NPN_3)); 
+subplot(4,1,3); hold on; plot(tUpdateVec,-3*sqrt(NPN_3)); title('Global Z 3\sigma'); 
+subplot(4,1,4); plot(tUpdateVec, 3*sqrt(NPN_4)); 
+subplot(4,1,4); hold on; plot(tUpdateVec, -3*sqrt(NPN_4)); title('Yaw 3\sigma');
 
 
 function [cm,pfTagsNew,pfTagsObserved,V] = cameraMeasurement(p,q,pfTags,I)
