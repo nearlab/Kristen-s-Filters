@@ -3,7 +3,7 @@ function [] = plotField(I, figNum)
 %orientation and feature positions 
 xr = I.x_init;
 qr = I.q_init;
-T_i2b = quat2dcm(qr');
+T_i2b = q2T(qr');
 map = I.map;
 tags = I.ptTags;
 figure(figNum);

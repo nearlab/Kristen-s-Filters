@@ -84,7 +84,7 @@ for iMonte=1:Nmonte
 %         dq_map = [1, 0, 0, 0];
 %     end        
     q_true_i2b = states_hist_true(1,7:10)';
-    T_i2b_true = quat2dcm(q_true_i2b');
+    T_i2b_true = q2T(q_true_i2b);
     [a0_true_i, w0_true_b] = I.trueInput(0);
     
     wmVec(1,:,iMonte) = w0_true_b' + sqrt(PSDg/dt)*randn(3,1)'; 
@@ -107,9 +107,9 @@ for iMonte=1:Nmonte
     da = chol(Palpha)*randn(3,1); % + map_angle_error;  % body 
     nt = norm(da);
     if nt>1e-10
-        dq = [cos(0.5*nt), ...
-            (da/nt)'.*sin(0.5*nt)];
-        q_i2b = quatnormalize(quatmultiply(q_init',dq))';
+        dq = [cos(0.5*nt); (da/nt).*sin(0.5*nt)];
+        q_i2b = qmult(q_init,dq);
+        q_i2b = q_i2b./norm(q_i2b); % normalize
     else
         q_i2b = q_init; % inertial-to-body
     end
@@ -127,14 +127,14 @@ for iMonte=1:Nmonte
     vy_err(1,iMonte) = v_i(2) - v_init(2);
     vz_err(1,iMonte) = v_i(3) - v_init(3);
     q_b2i = [q_i2b(1); -q_i2b(2:4)];
-    dq_b = quatmultiply(q_b2i',q_init')';
+    dq_b = qmult(q_b2i,q_init);
     phiVec(1,iMonte) = 2*dq_b(2)/dq_b(1);
     thVec(1,iMonte) = 2*dq_b(3)/dq_b(1);
     psiVec(1,iMonte) = 2*dq_b(4)/dq_b(1);
     
     for ii = 2:(T/dt)
         t_curr = (ii-1)*dt; % propagating from time (ii-2)*dt to time (ii-1)*dt
-        T_i2b_true = quat2dcm(states_hist_true(ii-1,7:10)); %inertial-to-body DCM
+        T_i2b_true = q2T(states_hist_true(ii-1,7:10)); %inertial-to-body DCM
         
         %measurement
         [a_true_i,w_true_b] = I.trueInput((ii-2)*dt);
@@ -174,7 +174,7 @@ for iMonte=1:Nmonte
         %add an error and true quaternion
         q_true_i2b = states_hist_true(ii,7:10)';
         qP_b2i = [qP_i2b(1); -qP_i2b(2:4)];
-        dq_b = quatmultiply(qP_b2i',q_true_i2b')';
+        dq_b = qmult(qP_b2i,q_true_i2b);
         phiVec(ii,iMonte) = 2*dq_b(2)/dq_b(1);
         thVec(ii,iMonte) = 2*dq_b(3)/dq_b(1);
         psiVec(ii,iMonte) = 2*dq_b(4)/dq_b(1);
@@ -256,8 +256,8 @@ for iMonte=1:Nmonte
             end
             
             % Store pose
-            T_i2b = quat2dcm(q_i2b');
-            q_i2c = quatmultiply(q_i2b',q_b2c')';
+            T_i2b = q2T(q_i2b);
+            q_i2c = qmult(q_i2b,q_b2c);
             x_ci = x_i + T_i2b'*x_cb; %position of camera in inertial frame
             pose = [q_i2c; x_ci]; %length 7 addition to state vector
             
@@ -267,17 +267,17 @@ for iMonte=1:Nmonte
             
             % Augment covariance matrix to include new pose
             N = M.nPoses;
-            T_i2c = quat2dcm(q_i2c');
+            T_i2c = q2T(q_i2c);
             J = [zeros(3,6), T_b2c, zeros(3,6*(N-1));
                  eye(3), zeros(3), cpe(T_i2b'*x_cb), zeros(3,6*(N-1))]; 
             P = [eye(6*(N-1)+9); J]*P*[eye(6*(N-1)+9); J]';
             
             % Augment nullspace
-            Nsp(1:9,1:4) = [eye(3), -cpe(x_i)*gVec_i;
-                        zeros(3), -cpe(v_i)*gVec_i;
-                        zeros(3), quat2dcm(q_i2b')*gVec_i]; % populate top left of nullspace matrix
-            Nsp_curr = [zeros(3), quat2dcm(q_i2b')*gVec_i;
-                        eye(3), -cpe(x_i)*gVec_i];
+            Nsp(1:9,1:4) = [eye(3), -cpe(x_init)*gVec_i;
+                        zeros(3), -cpe(v_init)*gVec_i;
+                        zeros(3), q2T(q_init)*gVec_i]; % populate top left of nullspace matrix
+            Nsp_curr = [zeros(3), q2T(q_init)*gVec_i;
+                        eye(3), -cpe(x_init)*gVec_i];
             Nsp = [Nsp; Nsp_curr];
 
             % If there are more than 20 poses, throw out the second oldest one
@@ -393,7 +393,7 @@ axisParam = I.plotAxisParam;
 plot3(xVec(:,1), xVec(:,2), xVec(:,3), '-k')
 hold on
 for ii = 1:floor(length(tVec)/20):size(qVec,1)
-    T_i2b = quat2dcm(qVec(ii,:,1));
+    T_i2b = q2T(qVec(ii,:,1));
     x = T_i2b'*[0.5*axisParam;0;0];
     y = T_i2b'*[0;0.5*axisParam;0];
     z = T_i2b'*[0;0;0.5*axisParam];
@@ -422,7 +422,7 @@ function [cm,pfTagsNew,pfTagsObserved,V] = cameraMeasurement(p,q,pfTags,I)
 %CAMERAMEASUREMENT Generates a simulated camera measurement of features in
 %I.map
 Vc = .01;
-T_i2b = quat2dcm(q'); 
+T_i2b = q2T(q); 
 pf_mat = I.map; %feature positions
 nPts = I.nPts;
 map_b = T_i2b*(pf_mat - p);
@@ -463,7 +463,7 @@ zHat = zeros(2,n);
 for ii = 1:n
     q = poseVec_i2c(1:4,pose_inds(ii));
     p = poseVec_i2c(5:7,pose_inds(ii)); 
-    T_i2c = quat2dcm(q');
+    T_i2c = q2T(q);
     pfHat_c = T_i2c*(pfHat_i - p);
     zHat(:,ii) = (1/pfHat_c(3))*[pfHat_c(1); pfHat_c(2)];
     J = 1/pfHat_c(3)*[1, 0, -pfHat_c(1)/pfHat_c(3); ...
@@ -524,14 +524,12 @@ vU_i = v_i + delStates(4:6);
 dth = delStates(7:9);
 nt = norm(dth);
 if nt>1e-10
-    qdth = [cos(0.5*nt), (dth/nt)'.*sin(0.5*nt)];
+    qdth = [cos(0.5*nt); (dth/nt).*sin(0.5*nt)];
 else
     qdth = [1 0 0 0];
 end
-if nt > 0.25 || any(abs(delStates(1:6)) > 1)
-    delStates;
-end
-qU_i2b = quatnormalize(quatmultiply(q_i2b',qdth))'; %quaternion update (Sola 64)
+qU_i2b = qmult(q_i2b,qdth); %quaternion update (Sola 64)
+qU_i2b = qU_i2b/norm(qU_i2b); 
 
 delPoseVec = reshape(delStates(10:end),6,[]);
 poseVecU_i2c = poseVec_i2c;
@@ -539,11 +537,12 @@ for ii = 1:M.nPoses
     dth = delPoseVec(1:3,ii);
     nt = norm(dth);
     if nt>1e-10
-        qdth = [cos(0.5*nt), (dth/nt)'.*sin(0.5*nt)];
+        qdth = [cos(0.5*nt); (dth/nt).*sin(0.5*nt)];
     else
         qdth = [1 0 0 0];
     end
-    poseVecU_i2c(1:4,ii) = quatnormalize(quatmultiply(poseVec_i2c(1:4,ii)',qdth))';
+    poseVecU_i2c(1:4,ii) = qmult(poseVec_i2c(1:4,ii),qdth);
+    poseVecU_i2c(1:4,ii) = poseVecU_i2c(1:4,ii)/norm(poseVecU_i2c(1:4,ii));
     poseVecU_i2c(5:7,ii) = poseVec_i2c(5:7,ii) + delPoseVec(4:6,ii);
 end
 N = 9 + 6*size(poseVec_i2c,2);
@@ -568,7 +567,7 @@ function [xP_i, vP_i, qP_i2b, poseVecP_i2c, PP] = prop(am_b, wm_b, x_i, v_i, q_i
 gVec_i = [0;0;-9.81];
 
 % Pre-processing
-T_i2b_hat = quat2dcm(q_i2b'); %inertial-to-body DCM
+T_i2b_hat = q2T(q_i2b); %inertial-to-body DCM
 am_i = T_i2b_hat' * am_b + gVec_i;
 dth_b = wm_b * dt; %delta theta [rad]
 
@@ -577,9 +576,9 @@ xP_i = x_i + v_i*dt + 0.5*am_i*dt^2;
 vP_i = v_i + am_i*dt;
 nt = norm(dth_b);
 if nt>1e-10
-    qdth_b = [cos(0.5*nt), ...
-        (dth_b/nt)'.*sin(0.5*nt)];
-    qP_i2b = quatnormalize(quatmultiply(q_i2b',qdth_b))';
+    qdth_b = [cos(0.5*nt); (dth_b/nt).*sin(0.5*nt)];
+    qP_i2b = qmult(q_i2b,qdth_b);
+    qP_i2b = qP_i2b/norm(qP_i2b);
 else
     qP_i2b = q_i2b;
 end
@@ -645,7 +644,7 @@ v = states(4:6);
 q = states(7:10);
 xdot = v;
 vdot = a_i;
-qdot = quatmultiply(q',[0,0.5*w_b'])';
+qdot = qmult(q,[0;0.5*w_b]);
 statesDot = [xdot;vdot;qdot];
 end
 
@@ -665,7 +664,7 @@ end
 pose_list = poseVec(:,pose_inds);
 meas_list = pfPkg.meas_list(:,meas_inds);
 p1 = pose_list(5:7,1); %first recorded camera position in inertial frame
-T_i2c1 = quat2dcm(pose_list(1:4,1)'); %first intertial-to-camera quaternion
+T_i2c1 = q2T(pose_list(1:4,1)); %first intertial-to-camera quaternion
 p0 = T_i2c1'*[0;0;1] + p1; %guess that the point was 1m in front of the first camera
 X0 = p0(1); Y0 = p0(2); Z0 = p0(3);
 a0 = X0/Z0; b0 = Y0/Z0; rho0 = 1/Z0;
@@ -680,12 +679,12 @@ function dz = lsFun(abr,z_list,q_list,p_list)
 a = abr(1); b = abr(2); rho = abr(3);
 n = size(z_list,2); %number of meas-pose pairs for this estimate
 p1 = p_list(:,1); %reference everything to first observation
-T_i2c1 = quat2dcm(q_list(:,1)'); %quaternions in q_list are q_i2c 
+T_i2c1 = q2T(q_list(:,1)); %quaternions in q_list are q_i2c 
 z = z_list(:);
 zHat = zeros(size(z));
 for ii = 1:n
     p = p_list(:,ii) - p1; %position of camera ii in frame 1
-    T = quat2dcm(q_list(:,ii)')*T_i2c1'; %rotation from frame 1 to frame ii
+    T = q2T(q_list(:,ii))*T_i2c1'; %rotation from frame 1 to frame ii
     h = T*[a;b;1] + rho*p;
     zHat(2*ii-1:2*ii) = (1/h(3))*[h(1); h(2)];
 end
